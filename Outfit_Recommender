@@ -1,0 +1,166 @@
+pip install mediapipe
+
+import os
+import cv2
+import pandas as pd
+import mediapipe as mp
+from sklearn.metrics import euclidean_distances
+import matplotlib.pyplot as plt
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+def extract_body_proportions(image_path):
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(static_image_mode=True)
+
+    image = cv2.imread(image_path)
+    results = pose.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+    if results.pose_landmarks:
+        landmarks = results.pose_landmarks.landmark
+
+        chest = (landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y +
+                 landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y) / 2
+        waist = (landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y +
+                 landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y) / 2
+        hip = (landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y +
+               landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y) / 2
+        shoulder = abs(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x -
+                       landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x)
+
+        return chest, waist, hip, shoulder
+    return None, None, None, None
+
+def create_dataset(base_folder, gender, celebrity_heights, output_csv):
+    gender_folder = os.path.join(base_folder, gender)
+    data = []
+
+    for celebrity in os.listdir(gender_folder):
+        celebrity_folder = os.path.join(gender_folder, celebrity)
+
+        if os.path.isdir(celebrity_folder):
+            image_path = os.path.join(celebrity_folder, f'{celebrity}_0.jpg')
+
+            if os.path.exists(image_path):
+                height = celebrity_heights.get(celebrity, None)
+
+                chest, waist, hip, shoulder = extract_body_proportions(image_path)
+
+                if chest is not None and height is not None:
+                    data.append({
+                        'Celebrity': celebrity,
+                        'Chest': chest * height,  # Scale based on height for reference
+                        'Waist': waist * height,
+                        'Hip': hip * height,
+                        'Shoulder': shoulder * height
+                    })
+
+
+    df = pd.DataFrame(data, columns=['Celebrity', 'Chest', 'Waist', 'Hip', 'Shoulder'])
+    df.to_csv(output_csv, index=False)
+
+base_folder = '/content/drive/MyDrive/Celebrity Data'
+celebrity_heights = { #height in cm
+    'samantha' : 158,
+    'priyanka_chopra' : 167.6,
+    'deepika_padukone' : 170,
+    'vidya_balan' : 163,
+    'ranveer_singh' : 173,
+    'hrithik_roshan' : 180,
+    'kamal_haasan' : 165,
+    'suriya' : 165,
+    'rajkumar_rao' : 170
+}
+
+output_csv_male = 'male_celebrity_body_proportions.csv'
+create_dataset(base_folder, 'Male', celebrity_heights, output_csv_male)
+
+output_csv_female = 'female_celebrity_body_proportions.csv'
+create_dataset(base_folder, 'Female', celebrity_heights, output_csv_female)
+
+male = pd.read_csv('/content/male_celebrity_body_proportions.csv')
+
+male
+
+female = pd.read_csv('/content/female_celebrity_body_proportions.csv')
+
+female
+
+'''def extract_body_proportions(image_path):
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(static_image_mode=True)
+
+    image = cv2.imread(image_path)
+    results = pose.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+    if results.pose_landmarks:
+        landmarks = results.pose_landmarks.landmark
+
+        chest = (landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y +
+                 landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y) / 2
+        waist = (landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y +
+                 landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y) / 2
+        hip = (landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y +
+               landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y) / 2
+        shoulder = abs(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x -
+                       landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x)
+
+        return chest, waist, hip, shoulder
+    return None, None, None, None'''
+
+def load_celebrity_data(csv_path):
+    return pd.read_csv(csv_path)
+
+def find_most_similar_celebrity(person_proportions, celebrity_df):  #find similar celebrity
+    person_array = [person_proportions['Chest'], person_proportions['Waist'],
+                    person_proportions['Hip'], person_proportions['Shoulder']]
+
+    celebrity_array = celebrity_df[['Chest', 'Waist', 'Hip', 'Shoulder']].values
+    distances = euclidean_distances([person_array], celebrity_array)[0]
+
+    closest_idx = distances.argmin()
+    return celebrity_df.iloc[closest_idx]['Celebrity']
+
+def display_celebrity_images(base_folder, celebrity_name):
+    celebrity_folder = os.path.join(base_folder, 'Male', celebrity_name)
+
+    if os.path.exists(celebrity_folder):
+        for image_file in os.listdir(celebrity_folder):
+            if image_file != f'{celebrity_name}_0.jpg':
+                image_path = os.path.join(celebrity_folder, image_file)
+                image = cv2.imread(image_path)
+                cv2.imshow(f'{celebrity_name} - {image_file}', image)
+                cv2.imshow(image)
+                cv2.waitKey(0)  # Press any key to move to the next image
+        cv2.destroyAllWindows()
+
+
+def process_and_compare(input_image_path, input_height, csv_path, base_folder):
+    chest, waist, hip, shoulder = extract_body_proportions(input_image_path)
+    if chest is None:
+        print("Error: Unable to extract body proportions from the input image.")
+        return
+
+    person_proportions = {
+        'Chest': chest * input_height,
+        'Waist': waist * input_height,
+        'Hip': hip * input_height,
+        'Shoulder': shoulder * input_height
+    }
+
+    celebrity_df = load_celebrity_data(csv_path)
+
+    similar_celebrity = find_most_similar_celebrity(person_proportions, celebrity_df)
+    print(f'The most similar celebrity is: {similar_celebrity}')
+
+    display_celebrity_images(base_folder, similar_celebrity)
+
+#input_image_path = '/content/drive/MyDrive/Thuli/Male/vikram.png'
+input_image_path = '/content/drive/MyDrive/Celebrity Data/Female/vb0.jpg'
+
+input_height = 158  # height in cm
+csv_path = 'female_celebrity_body_proportions.csv'
+base_folder = '/content/drive/MyDrive/Celebrity Data'
+
+process_and_compare(input_image_path, input_height, csv_path, base_folder)
